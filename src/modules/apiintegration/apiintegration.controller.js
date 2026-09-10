@@ -122,7 +122,7 @@ export const createWebhook = async (req, res) => {
 export const verifyWebhook = async (req, res) => {
   try {
     const { vendor_id } = req.user;
-    
+
     const result = await handleverifyWebhook({
       vendor_id,
       ...req.body
@@ -138,7 +138,7 @@ export const verifyWebhook = async (req, res) => {
 
 export const apiIntegrationPlanRequest = async (req, res) => {
   try {
-    const { vendor_id , profile_id } = req.user;
+    const { vendor_id, profile_id } = req.user;
 
     const result = await planSubscribeRequestService(
       { profile_id, vendor_id },
