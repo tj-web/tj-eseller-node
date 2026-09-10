@@ -15,6 +15,7 @@ import TblLeads from "../../models/leads.model.js";
 import LeadStatus from "../../models/leadStatus.model.js";
 import LeadHistory from "../../models/leadHistory.model.js";
 import mongoose from "mongoose";
+import engagementEvent from "../../helpers/engagementEvent.js";
 
 // Define Associations needed for planSubscribeRequestService
 VendorAuth.hasOne(VendorDetails, {
@@ -70,7 +71,7 @@ const valiDateCredentials = (auth_type, credColumns) => {
   }
 };
 
-const VALID_API_PLAN_IDS = [46, 47,48]; // Manually add valid plan IDs here
+const VALID_API_PLAN_IDS = [46, 47, 48]; // Manually add valid plan IDs here
 
 const checkIfVendorHasApiPlan = async (vendor_id) => {
   const query = `
@@ -132,7 +133,7 @@ export const handleCreateWebhook = async ({
   if (!verifyResult || !verifyResult.ok) {
     throw new Error(
       verifyResult?.message ||
-        "Webhook verification failed. Please test your connection first."
+      "Webhook verification failed. Please test your connection first."
     );
   }
 
@@ -485,17 +486,20 @@ export const handleUpdateLeadAction = async (headers, body) => {
   }
 
   // 2. Verify auth token
-  const authHeader = headers.authorization;
+  const authHeader = headers.authorization || headers.Authorization;
   if (!authHeader) {
     throw new Error("Invalid Token.");
   }
-  const tokenParts = authHeader.split(" ");
+  const tokenParts = authHeader.trim().split(/\s+/);
   const providedToken = tokenParts[tokenParts.length - 1];
 
   const authRecord = await VendorWebhookAuth.findOne({
     where: { vendor_id: vendor_id }
   });
-  if (!authRecord || authRecord.status !== 1) {
+  if (!authRecord) {
+    throw new Error("Not Authorized.");
+  }
+  if (authRecord.status !== 1) {
     throw new Error("Webhook setup is not active. Please complete and activate your webhook integration first.");
   }
 
@@ -506,7 +510,7 @@ export const handleUpdateLeadAction = async (headers, body) => {
 
   // 3. Fetch current lead
   const currentLead = await TblLeads.findOne({
-    attributes: ["id", "lead_action", "acd_uuid", "vendor_id"],
+    attributes: ["id", "customer_id", "name", "email", "lead_action", "acd_uuid", "vendor_id"],
     where: {
       lead_guid: lead_guid,
       vendor_id: vendor_id
@@ -518,7 +522,7 @@ export const handleUpdateLeadAction = async (headers, body) => {
 
   // 4. Fetch new status
   const newStatus = await LeadStatus.findOne({
-    attributes: ["id", "status_id", "lead_action_name", "status_name"],
+    attributes: ["id", "status_id", "lead_action_name", "status_name", "subaction_name"],
     where: {
       lead_status_guid: lead_status_guid
     }
@@ -528,7 +532,7 @@ export const handleUpdateLeadAction = async (headers, body) => {
   }
 
   // 5. If new status id === current lead_action → throw "Trying to update existing Lead Action"
-  if (newStatus.id === currentLead.lead_action) {
+  if (Number(newStatus.id) === Number(currentLead.lead_action)) {
     throw new Error("Trying to update existing Lead Action");
   }
 
@@ -551,15 +555,15 @@ export const handleUpdateLeadAction = async (headers, body) => {
     // 7. Fetch previous action name
     if (currentLead.lead_action) {
       const oldStatus = await LeadStatus.findOne({
-        attributes: ["lead_action_name", "status_name"],
+        attributes: ["lead_action_name", "status_name", "subaction_name"],
         where: { id: currentLead.lead_action }
       });
       if (oldStatus) {
-        oldActionName = oldStatus.lead_action_name || oldStatus.status_name || "";
+        oldActionName = oldStatus.subaction_name || oldStatus.lead_action_name || oldStatus.status_name || "";
       }
     }
 
-    const newActionName = newStatus.lead_action_name || newStatus.status_name || "";
+    const newActionName = newStatus.subaction_name || newStatus.lead_action_name || newStatus.status_name || "";
 
     // 9. Insert into tbl_leads_history
     await LeadHistory.create(
@@ -568,7 +572,7 @@ export const handleUpdateLeadAction = async (headers, body) => {
         acd_uuid: currentLead.acd_uuid || "",
         type: "action",
         remark: newActionName,
-        source: "crm"
+        source: "oem_api"
       },
       { transaction }
     );
@@ -579,34 +583,70 @@ export const handleUpdateLeadAction = async (headers, body) => {
     throw dbError;
   }
 
-  const newActionNameResolved = newStatus.lead_action_name || newStatus.status_name || "";
+  const newActionNameResolved = newStatus.subaction_name || newStatus.lead_action_name || newStatus.status_name || "";
 
   // 10. Dump to MongoDB tracks collection
   try {
+    let vendorName = "";
+    let vendorEmail = "";
+    try {
+      const vendorAuth = await VendorAuth.findOne({
+        attributes: ["first_name", "last_name", "email"],
+        where: { vendor_id: vendor_id }
+      });
+      if (vendorAuth) {
+        vendorName = `${vendorAuth.first_name || ""} ${vendorAuth.last_name || ""}`.trim();
+        vendorEmail = vendorAuth.email || "";
+      }
+    } catch (vErr) {
+      // Non-blocking
+    }
+
     const db = mongoose.connection?.db;
     if (db) {
       await db.collection("tracks").insertOne({
-        lead_id: currentLead.id,
-        feed_action: "lead_status",
-        feed_activity: "Lead Status Changed By OEM.",
-        changes: [
-          {
-            fieldName: "lead_status",
-            valueBefore: {
-              id: currentLead.lead_action || 0,
-              name: oldActionName || ""
-            },
-            valueAfter: {
-              id: newStatus.id,
-              name: newActionNameResolved
+        feeds: {
+          app_source: "eseller",
+          feed_action: "lead_status",
+          feed_activity: "Lead Status Changed By OEM.",
+          modified_by: {
+            id: String(vendor_id || ""),
+            name: vendorName,
+            email: vendorEmail
+          },
+          lead_id: String(currentLead.id),
+          customer_id: String(currentLead.customer_id || ""),
+          customer_info: {
+            customer_id: String(currentLead.customer_id || ""),
+            customer_name: currentLead.name || "",
+            customer_email: currentLead.email || ""
+          },
+          changes: [
+            {
+              fieldName: "lead_status",
+              valueBefore: {
+                id: String(currentLead.lead_action || 0),
+                name: oldActionName || ""
+              },
+              valueAfter: {
+                id: String(newStatus.id),
+                name: newActionNameResolved
+              }
             }
-          }
-        ],
-        created_at: new Date()
+          ]
+        },
+        created_at: new Date().toISOString().replace("T", " ").slice(0, 19)
       });
     }
   } catch (mongoErr) {
     console.error("Error inserting to MongoDB tracks:", mongoErr);
+  }
+
+  // 11. Trigger MoEngage Lead Action engagement event 
+  try {
+    await engagementEvent.sendLeadActionEvent({ vendor_id }, { lead_id: currentLead.id });
+  } catch (eventErr) {
+    console.error("[Engagement Event Error] sendLeadActionEvent failed:", eventErr);
   }
 
   return true;
@@ -681,11 +721,11 @@ export const handleAddLeadRemark = async (headers, body) => {
   }
 
   // 2. Authentication & Authorization
-  const authHeader = headers.authorization;
+  const authHeader = headers.authorization || headers.Authorization;
   if (!authHeader) {
     throw new Error("Invalid Token.");
   }
-  const tokenParts = authHeader.split(" ");
+  const tokenParts = authHeader.trim().split(/\s+/);
   const providedToken = tokenParts[tokenParts.length - 1];
 
   const authRecord = await VendorWebhookAuth.findOne({
@@ -724,6 +764,13 @@ export const handleAddLeadRemark = async (headers, body) => {
     remark: sanitizedRemark,
     source: "oem_api"
   });
+
+  // 5. Trigger MoEngage OEM Add Remarks engagement event 
+  try {
+    await engagementEvent.sendRemarkEvent({ vendor_id }, { lead_id: currentLead.id, remark: sanitizedRemark });
+  } catch (eventErr) {
+    console.error("[Engagement Event Error] sendRemarkEvent failed:", eventErr);
+  }
 
   return true;
 };
