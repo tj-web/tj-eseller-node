@@ -11,16 +11,14 @@ const ACCESS_RULES = {
     allowedPaths: [
       "/auth",
       "/help-support",
-      "/company-information",
-      "/brands",
-      "/product",
-      "/eseller-agreement",
+      "/partner-setup",
     ],
     message: "Please complete your partner setup to access this feature."
   },
   1: {
     blockedPaths: [
       "/orders",
+      "/agreement",
     ],
     message: "This feature is restricted for your account mode."
   },

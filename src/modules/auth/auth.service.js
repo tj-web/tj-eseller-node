@@ -214,7 +214,7 @@ export const registerVendor = async (data) => {
 
         password: hashedPassword,
 
-        vendor_type: 1,
+        vendor_type: 0,
         signup_progress: 2,
 
         email_verified: 0,

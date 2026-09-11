@@ -18,6 +18,7 @@ import salesRoutes from "./modules/sales/sales.route.js";
 import apiIntegrationRoutes from "./modules/apiintegration/apiintegration.route.js";
 import { updateLeadAction, addLeadRemark, getLeadStatusGuidReference } from "./modules/apiintegration/apiintegration.controller.js";
 import oemDashboardRoutes from "./modules/oemDashboard/oemDashboard.routes.js";
+import partnerSetupRoutes from "./modules/partner-setup/partnerSetup.route.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 import { authenticate } from "./middlewares/authMiddleware.js";
 import { vendorModeMiddleware } from "./middlewares/vendorModeMiddleware.js";
@@ -50,6 +51,7 @@ app.get("/health", function (req, res) {
 const API_PREFIX = process.env.API_VERSION_PATH;
 
 // Apply authenticate and vendorModeMiddleware to protected routes
+app.use(`${API_PREFIX}/partner-setup`, authenticate, vendorModeMiddleware, partnerSetupRoutes);
 app.use(`${API_PREFIX}/dashboard`, authenticate, vendorModeMiddleware, dashboardRoutes);
 app.use(`${API_PREFIX}/lead`, authenticate, vendorModeMiddleware, manageLeads);
 app.use(`${API_PREFIX}/orders`, authenticate, vendorModeMiddleware, orderRoutes);
